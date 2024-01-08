@@ -1,87 +1,119 @@
-import tkinter as tk
-from tkinter import messagebox
+import hashlib
+import time
+import json
+from typing import List
 
-class LoginPage(tk.Tk):
+class Transaction:
+    def __init__(self, sender, recipient, amount):
+        self.sender = sender
+        self.recipient = recipient
+        self.amount = amount
+
+class Block:
+    def __init__(self, index, previous_hash, timestamp, transactions, proof, hash):
+        self.index = index
+        self.previous_hash = previous_hash
+        self.timestamp = timestamp
+        self.transactions = transactions
+        self.proof = proof
+        self.hash = hash
+
+def calculate_hash(index, previous_hash, timestamp, transactions, proof):
+    value = str(index) + str(previous_hash) + str(timestamp) + str(transactions) + str(proof)
+    return hashlib.sha256(value.encode()).hexdigest()
+
+def create_genesis_block():
+    return Block(0, "0", time.time(), [], 0, calculate_hash(0, "0", time.time(), [], 0))
+
+def create_new_block(index, previous_hash, transactions, proof):
+    timestamp = time.time()
+    hash = calculate_hash(index, previous_hash, timestamp, transactions, proof)
+    return Block(index, previous_hash, timestamp, transactions, proof, hash)
+
+def proof_of_work(last_proof):
+    proof = 0
+    while not valid_proof(last_proof, proof):
+        proof += 1
+    return proof
+
+def valid_proof(last_proof, proof):
+    guess = f'{last_proof}{proof}'.encode()
+    guess_hash = hashlib.sha256(guess).hexdigest()
+    return guess_hash[:2] == "00"
+
+class Blockchain:
     def __init__(self):
-        super().__init__()
+        self.chain = [create_genesis_block()]
+        self.transactions = []
+        self.nodes = set()
 
-        self.title("Login and Signup Page")
-        self.geometry("400x300")
+    def add_transaction(self, sender, recipient, amount):
+        self.transactions.append(Transaction(sender, recipient, amount))
+        return self.last_block.index + 1
 
-        self.create_widgets()
+    def add_node(self, address):
+        self.nodes.add(address)
 
-    def create_widgets(self):
-        self.tab_control = tk.Notebook(self)
+    def valid_chain(self, chain):
+        last_block = chain[0]
+        current_index = 1
 
-        self.login_tab = tk.Frame(self.tab_control)
-        self.signup_tab = tk.Frame(self.tab_control)
+        while current_index < len(chain):
+            block = chain[current_index]
 
-        self.tab_control.add(self.login_tab, text="Login")
-        self.tab_control.add(self.signup_tab, text="Signup")
+            if block['previous_hash'] != calculate_hash(last_block['index'], last_block['previous_hash'], last_block['timestamp'], last_block['transactions'], last_block['proof']):
+                return False
 
-        self.tab_control.pack(expand=1, fill="both")
+            if not valid_proof(last_block['proof'], block['proof']):
+                return False
 
-        self.create_login_tab()
-        self.create_signup_tab()
+            last_block = block
+            current_index += 1
 
-    def create_login_tab(self):
-        login_label = tk.Label(self.login_tab, text="Login Page", font=("Helvetica", 16))
-        login_label.grid(row=0, column=1, pady=10)
+        return True
 
-        username_label = tk.Label(self.login_tab, text="Username:")
-        username_label.grid(row=1, column=0, pady=5)
+    def resolve_conflicts(self):
+        neighbors = self.nodes
+        new_chain = None
 
-        password_label = tk.Label(self.login_tab, text="Password:")
-        password_label.grid(row=2, column=0, pady=5)
+        max_length = len(self.chain)
 
-        self.login_username_entry = tk.Entry(self.login_tab)
-        self.login_username_entry.grid(row=1, column=1, pady=5)
+        for node in neighbors:
+            response = requests.get(f'http://{node}/chain')
 
-        self.login_password_entry = tk.Entry(self.login_tab, show="*")
-        self.login_password_entry.grid(row=2, column=1, pady=5)
+            if response.status_code == 200:
+                length = response.json()['length']
+                chain = response.json()['chain']
 
-        login_button = tk.Button(self.login_tab, text="Login", command=self.login)
-        login_button.grid(row=3, column=1, pady=10)
+                if length > max_length and self.valid_chain(chain):
+                    max_length = length
+                    new_chain = chain
 
-    def create_signup_tab(self):
-        signup_label = tk.Label(self.signup_tab, text="Signup Page", font=("Helvetica", 16))
-        signup_label.grid(row=0, column=1, pady=10)
+        if new_chain:
+            self.chain = new_chain
+            return True
 
-        new_username_label = tk.Label(self.signup_tab, text="New Username:")
-        new_username_label.grid(row=1, column=0, pady=5)
+        return False
 
-        new_password_label = tk.Label(self.signup_tab, text="New Password:")
-        new_password_label.grid(row=2, column=0, pady=5)
+blockchain = Blockchain()
 
-        self.signup_username_entry = tk.Entry(self.signup_tab)
-        self.signup_username_entry.grid(row=1, column=1, pady=5)
+last_block = blockchain.chain[-1]
+proof = proof_of_work(last_block.proof)
+blockchain.add_transaction("Genesis", "Alice", 1)
 
-        self.signup_password_entry = tk.Entry(self.signup_tab, show="*")
-        self.signup_password_entry.grid(row=2, column=1, pady=5)
+blockchain.add_transaction("Genesis", "Tyler", 20)
 
-        signup_button = tk.Button(self.signup_tab, text="Signup", command=self.signup)
-        signup_button.grid(row=3, column=1, pady=10)
+blockchain.add_node("http://localhost:5001")
 
-    def login(self):
-        username = self.login_username_entry.get()
-        password = self.login_password_entry.get()
+last_proof = last_block.proof
+proof = proof_of_work(last_proof)
 
-        # Add authentication logic here
-        # For demonstration purposes, let's assume a hardcoded username and password
-        if username == "demo" and password == "demo":
-            messagebox.showinfo("Login Successful", "Welcome, {}".format(username))
-        else:
-            messagebox.showerror("Login Failed", "Invalid username or password")
+blockchain.add_transaction("Miner", "Recipient", 1)  # Example transaction
+block = create_new_block(last_block.index + 1, last_block.hash, blockchain.transactions, proof)
 
-    def signup(self):
-        new_username = self.signup_username_entry.get()
-        new_password = self.signup_password_entry.get()
+blockchain.transactions = []
 
-        # Add user registration logic here
-        # For demonstration purposes, let's assume a simple registration success
-        messagebox.showinfo("Signup Successful", "Account created for {}".format(new_username))
+blockchain.chain.append(block)
 
-
-if __name__ == "__main__":
-    app = LoginPage()
-    app.mainloop()
+for block in blockchain.chain:
+    print(f"Block #{block.index} - Hash: {block.hash} - Proof: {block.proof} - Transactions: {len(block.transactions)}")
